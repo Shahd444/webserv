@@ -230,6 +230,11 @@ int main(int argc, char **argv)
         Logger::error("Usage: ./webserv <config_file>");
         return 1;
     }
+    if (std::string(argv[1]).substr(std::string(argv[1]).size() - 5) != ".conf")
+    {
+        std::cerr << "Invalid extension in config file: " << argv[1] << std::endl;
+        return 1;
+    }
 
     ConfigParser parser;
     if (!parser.parse(argv[1]))

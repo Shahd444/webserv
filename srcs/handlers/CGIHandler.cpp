@@ -190,54 +190,6 @@ void CGIHandler::freeEnvArray(char **envArray)
 	delete[] envArray;
 }
 
-std::string readWithTimeout(int fd, pid_t pid, int timeoutSeconds)
-{
-    std::string output;
-    char buffer[65536];
-
-    struct pollfd pfd;
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-
-    std::time_t startTime = std::time(NULL);
-
-    while (true)
-    {
-        // Check if total time has exceeded timeout
-        std::time_t elapsed = std::time(NULL) - startTime;
-        if (elapsed >= timeoutSeconds)
-        {
-            kill(pid, SIGKILL);
-            throw std::runtime_error("CGI Timeout");
-        }
-        
-        // Calculate remaining time for this poll call
-        int remainingSeconds = timeoutSeconds - elapsed;
-        int pollTimeoutMs = (remainingSeconds > 0) ? (remainingSeconds * 1000) : 0;
-        if (pollTimeoutMs > 1000)
-            pollTimeoutMs = 1000; // Cap to 1 second per poll to allow checking elapsed time
-
-        int ret = poll(&pfd, 1, pollTimeoutMs);
-        if (ret == 0)
-        {
-            // Timeout in poll - continue loop to check total elapsed time
-            continue;
-        }
-        else if (ret < 0)
-        {
-            throw std::runtime_error("Poll error");
-        }
-
-        ssize_t bytesRead = read(fd, buffer, sizeof(buffer));
-        if (bytesRead > 0)
-            output.append(buffer, bytesRead);
-        else
-            break;
-    }
-
-    return output;
-}
-
 void closePipes(int inPipe[2], int outPipe[2])
 {
     close(inPipe[0]);

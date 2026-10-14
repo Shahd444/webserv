@@ -3,208 +3,524 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>webserv console</title>
+<title>webserv — an HTTP server written from scratch</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0b0d'/%3E%3Cpath d='M9 22l5-6-5-6' stroke='%23ffb454' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<meta name="description" content="A non-blocking HTTP/1.1 server in C++98 with CGI, uploads, autoindex and multi-port virtual servers. Try it live.">
 <style>
   :root {
-    --paper: #f3efe6;
-    --panel: #fbf9f3;
-    --ink: #1d1b17;
-    --dim: #6f695d;
-    --line: #d6cfbf;
-    --accent: #c2410c;
-    --ok: #2f6b3a;
-    --warn: #9a6b00;
-    --bad: #a3231a;
-    --sel: #e8e1cf;
+    --bg: #0b0b0d;
+    --bg2: #111114;
+    --panel: #151519;
+    --line: #26262c;
+    --line2: #34343c;
+    --ink: #f1ede4;
+    --dim: #9a968b;
+    --faint: #5f5c54;
+    --amber: #ffb454;
+    --amber-d: #c9822a;
+    --ok: #7fd38e;
+    --warn: #f0c35a;
+    --bad: #f27d72;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-    --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --paper: #17160f; --panel: #1e1d15; --ink: #ebe6d8; --dim: #958e7d;
-      --line: #36342a; --accent: #f08a4b; --ok: #7bc08a; --warn: #e0b04a;
-      --bad: #ef7d73; --sel: #2b2a1f;
-    }
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html { scroll-behavior: smooth; scroll-padding-top: 70px; }
   body {
-    background: var(--paper); color: var(--ink);
-    font: 14px/1.45 var(--sans);
-    display: grid; grid-template-columns: 250px 1fr; grid-template-rows: auto 1fr;
-    grid-template-areas: "top top" "side main";
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
   }
-  header {
-    grid-area: top; display: flex; align-items: baseline; gap: 18px;
-    padding: 12px 20px; border-bottom: 1px solid var(--line);
-  }
-  header h1 { font: 700 15px var(--mono); margin: 0; letter-spacing: -.02em; }
-  header h1 span { color: var(--accent); }
-  .origin { font: 12px var(--mono); color: var(--dim); }
-  .ports { margin-left: auto; font: 12px var(--mono); color: var(--dim); }
-  .ports a { color: var(--ink); margin-left: 10px; text-decoration: none; border-bottom: 1px solid var(--line); }
-  .ports a:hover { border-color: var(--accent); }
-  .ports a.here { border-color: var(--accent); }
+  ::selection { background: var(--amber); color: #111; }
+  a { color: inherit; }
+  code { font-family: var(--mono); font-size: .9em; color: var(--amber); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
 
-  aside {
-    grid-area: side; border-right: 1px solid var(--line);
-    overflow-y: auto; padding: 14px 0 20px;
+  /* nav ------------------------------------------------------------------ */
+  nav {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(11,11,13,.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
   }
-  aside h2 {
-    font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .08em;
-    color: var(--dim); margin: 0; padding: 4px 20px 6px;
+  nav .wrap { display: flex; align-items: center; height: 58px; gap: 30px; }
+  .logo { font: 700 16px var(--mono); text-decoration: none; letter-spacing: -.02em; }
+  .logo i { color: var(--amber); font-style: normal; }
+  nav .links { display: flex; gap: 26px; margin-left: auto; font-size: 14px; color: var(--dim); }
+  nav .links a { text-decoration: none; transition: color .15s; }
+  nav .links a:hover { color: var(--ink); }
+  .live {
+    display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--dim);
+    border: 1px solid var(--line2); border-radius: 99px; padding: 5px 12px;
   }
-  aside h2:not(:first-child) { margin-top: 18px; }
-  .preset, .hist {
-    display: flex; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
-    padding: 5px 20px; font: 12.5px var(--mono); color: var(--ink); cursor: pointer;
-    border-left: 2px solid transparent;
-  }
-  .preset:hover, .hist:hover { background: var(--sel); }
-  .preset .m, .hist .m { width: 46px; flex: none; color: var(--dim); }
-  .preset .m.GET, .hist .m.GET { color: var(--ok); }
-  .preset .m.POST, .hist .m.POST { color: var(--warn); }
-  .preset .m.DELETE, .hist .m.DELETE { color: var(--bad); }
-  .preset .p, .hist .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .hist .s { color: var(--dim); }
-  .hist .s.e { color: var(--bad); }
-  .empty { padding: 4px 20px; color: var(--dim); font-size: 12.5px; }
-  .clear { background: none; border: 0; color: var(--dim); font: 11px var(--mono); cursor: pointer; padding: 4px 20px; text-decoration: underline; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+  .live.up .dot { background: var(--ok); box-shadow: 0 0 0 0 rgba(127,211,142,.6); animation: ping 2s infinite; }
+  @keyframes ping { 70% { box-shadow: 0 0 0 7px rgba(127,211,142,0); } 100% { box-shadow: 0 0 0 0 rgba(127,211,142,0); } }
 
-  main { grid-area: main; overflow-y: auto; padding: 22px 28px 60px; max-width: 980px; }
-  .line { display: flex; gap: 0; border: 1px solid var(--ink); background: var(--panel); }
-  .line select, .line input, .line button { font: 14px var(--mono); border: 0; background: none; color: var(--ink); height: 40px; }
-  .line select { padding: 0 8px 0 12px; border-right: 1px solid var(--line); font-weight: 700; cursor: pointer; }
-  .line input { flex: 1; padding: 0 12px; min-width: 0; }
-  .line input:focus, .line select:focus { outline: none; background: var(--sel); }
-  .line button {
-    padding: 0 22px; background: var(--ink); color: var(--paper); font-weight: 700; cursor: pointer;
+  /* hero ----------------------------------------------------------------- */
+  .hero { position: relative; overflow: hidden; padding: 96px 0 84px; }
+  .hero::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 56px 56px; opacity: .32;
+    mask-image: radial-gradient(ellipse 70% 70% at 70% 30%, #000 10%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse 70% 70% at 70% 30%, #000 10%, transparent 75%);
   }
-  .line button:hover { background: var(--accent); color: #fff; }
+  .hero::after {
+    content: ""; position: absolute; width: 620px; height: 620px; right: -140px; top: -180px;
+    background: radial-gradient(circle, rgba(255,180,84,.16), transparent 62%); pointer-events: none;
+  }
+  .hero .wrap { position: relative; z-index: 1; display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center; }
+  .eyebrow { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--amber); margin: 0 0 22px; }
+  h1 {
+    font: 400 clamp(42px, 6.2vw, 78px)/1.02 var(--serif); letter-spacing: -.025em; margin: 0 0 26px;
+  }
+  h1 em { font-style: italic; color: var(--amber); }
+  .lede { font-size: 18px; color: var(--dim); max-width: 520px; margin: 0 0 34px; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 22px; border-radius: 10px;
+    font: 600 14px var(--sans); text-decoration: none; border: 1px solid var(--line2); transition: all .15s;
+  }
+  .btn.main { background: var(--amber); color: #15110a; border-color: var(--amber); }
+  .btn.main:hover { background: #ffc275; transform: translateY(-1px); }
+  .btn.ghost:hover { border-color: var(--ink); }
+
+  /* terminal ------------------------------------------------------------- */
+  .term {
+    background: #08080a; border: 1px solid var(--line2); border-radius: 14px;
+    box-shadow: 0 40px 80px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.02) inset;
+    overflow: hidden; font: 13px/1.65 var(--mono);
+  }
+  .term .bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  .term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line2); }
+  .term .bar span { margin-left: 10px; color: var(--faint); font-size: 12px; }
+  .term pre { margin: 0; padding: 18px 20px 22px; min-height: 300px; white-space: pre-wrap; word-break: break-word; }
+  .t-p { color: var(--amber); }
+  .t-d { color: var(--faint); }
+  .t-ok { color: var(--ok); } .t-warn { color: var(--warn); } .t-bad { color: var(--bad); }
+  .caret { display: inline-block; width: 8px; height: 15px; background: var(--ink); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* facts strip ---------------------------------------------------------- */
+  .facts { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg2); }
+  .facts .wrap { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .fact { padding: 26px 0 26px 26px; border-left: 1px solid var(--line); }
+  .fact:first-child { border-left: 0; padding-left: 0; }
+  .fact b { display: block; font: 400 28px/1.1 var(--serif); white-space: nowrap; margin-bottom: 4px; }
+  .fact span { font: 12px var(--mono); color: var(--dim); letter-spacing: .04em; }
+
+  /* sections ------------------------------------------------------------- */
+  section { padding: 104px 0 0; }
+  .k { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--amber); margin: 0 0 14px; }
+  h2 { font: 400 clamp(32px, 4vw, 48px)/1.1 var(--serif); letter-spacing: -.02em; margin: 0 0 16px; }
+  .sub { color: var(--dim); max-width: 600px; margin: 0 0 52px; font-size: 17px; }
+
+  /* pipeline ------------------------------------------------------------- */
+  .pipe { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; counter-reset: s; }
+  .step { position: relative; padding: 0 22px 0 0; }
+  .step::before {
+    counter-increment: s; content: "0" counter(s);
+    display: block; font: 12px var(--mono); color: var(--faint); margin-bottom: 14px;
+  }
+  .step::after {
+    content: ""; position: absolute; top: 6px; left: 30px; right: 14px; height: 1px;
+    background: linear-gradient(90deg, var(--line2), var(--line2) 70%, transparent);
+  }
+  .step:last-child::after { display: none; }
+  .step h3 { font: 600 16px var(--mono); margin: 0 0 8px; }
+  .step:hover h3 { color: var(--amber); }
+  .step p { margin: 0; font-size: 14px; color: var(--dim); line-height: 1.55; }
+
+  /* features ------------------------------------------------------------- */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .feat { background: var(--bg); padding: 30px 28px 32px; transition: background .2s; }
+  .feat:hover { background: var(--panel); }
+  .feat .ic { font: 13px var(--mono); color: var(--amber); border: 1px solid var(--line2); border-radius: 8px; display: inline-block; padding: 3px 9px; margin-bottom: 20px; }
+  .feat h3 { font: 400 22px/1.2 var(--serif); margin: 0 0 10px; }
+  .feat p { margin: 0; font-size: 14.5px; color: var(--dim); }
+
+  /* console -------------------------------------------------------------- */
+  .console {
+    display: grid; grid-template-columns: 240px 1fr; background: var(--panel);
+    border: 1px solid var(--line2); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 50px 90px -40px rgba(0,0,0,.9);
+  }
+  .c-side { border-right: 1px solid var(--line); background: var(--bg2); padding: 16px 0; max-height: 760px; overflow-y: auto; }
+  .c-side h4 { font: 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--faint); margin: 0; padding: 4px 18px 8px; font-weight: 500; }
+  .c-side h4 + div + h4 { margin-top: 18px; }
+  .item { display: flex; gap: 8px; width: 100%; text-align: left; background: none; border: 0; padding: 6px 18px; font: 12.5px var(--mono); color: var(--ink); cursor: pointer; }
+  .item:hover { background: rgba(255,255,255,.04); }
+  .item .m { width: 46px; flex: none; color: var(--dim); }
+  .item .m.GET { color: var(--ok); } .item .m.POST { color: var(--warn); } .item .m.DELETE { color: var(--bad); }
+  .item .p { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .s { color: var(--dim); } .item .s.e { color: var(--bad); }
+  .none { padding: 2px 18px; font-size: 12.5px; color: var(--faint); }
+  .clear { background: none; border: 0; padding: 6px 18px; color: var(--dim); font: 11px var(--mono); text-decoration: underline; cursor: pointer; }
+
+  .c-main { padding: 22px; min-width: 0; }
+  .line { display: flex; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg); overflow: hidden; }
+  .line:focus-within { border-color: var(--amber-d); }
+  .line select, .line input, .line button { font: 14px var(--mono); border: 0; background: none; color: var(--ink); height: 44px; }
+  .line select { padding: 0 6px 0 14px; border-right: 1px solid var(--line2); font-weight: 700; cursor: pointer; }
+  .line select option { background: var(--panel); }
+  .line input { flex: 1; padding: 0 14px; min-width: 0; }
+  .line select:focus, .line input:focus { outline: none; }
+  .line button { padding: 0 24px; background: var(--amber); color: #15110a; font-weight: 700; cursor: pointer; transition: background .15s; }
+  .line button:hover { background: #ffc275; }
   .line button:disabled { opacity: .5; cursor: wait; }
 
-  .tabs { display: flex; gap: 20px; margin: 22px 0 0; border-bottom: 1px solid var(--line); }
-  .tab {
-    background: none; border: 0; padding: 6px 0; font: 600 12px var(--mono);
-    text-transform: uppercase; letter-spacing: .06em; color: var(--dim); cursor: pointer;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
-  }
-  .tab.on { color: var(--ink); border-color: var(--accent); }
+  .tabs { display: flex; gap: 22px; margin: 20px 0 0; border-bottom: 1px solid var(--line); }
+  .tab { background: none; border: 0; padding: 6px 0; font: 12px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--dim); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab:hover { color: var(--ink); }
+  .tab.on { color: var(--ink); border-color: var(--amber); }
   .pane { display: none; padding: 14px 0 0; }
   .pane.on { display: block; }
-  textarea, .kv input[type=text] {
-    width: 100%; font: 13px var(--mono); color: var(--ink); background: var(--panel);
-    border: 1px solid var(--line); padding: 8px 10px;
+  textarea, .kv input {
+    width: 100%; font: 13px var(--mono); color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line2); border-radius: 8px; padding: 9px 11px;
   }
-  textarea { min-height: 120px; resize: vertical; }
-  textarea:focus, .kv input:focus { outline: none; border-color: var(--ink); }
+  textarea { min-height: 110px; resize: vertical; }
+  textarea:focus, .kv input:focus { outline: none; border-color: var(--amber-d); }
   .kv { display: grid; grid-template-columns: 1fr 1.6fr 28px; gap: 6px; margin-bottom: 6px; }
   .kv button { background: none; border: 0; color: var(--dim); cursor: pointer; font: 16px var(--mono); }
   .kv button:hover { color: var(--bad); }
-  .link { background: none; border: 0; padding: 0; font: 12px var(--mono); color: var(--accent); cursor: pointer; text-decoration: underline; }
-  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; }
+  .link { background: none; border: 0; padding: 0; font: 12px var(--mono); color: var(--amber); cursor: pointer; text-decoration: underline; }
+  .row { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; color: var(--dim); }
   .row label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .row input { accent-color: var(--amber); }
   .hint { color: var(--dim); font-size: 12.5px; margin: 8px 0 0; }
-  .drop {
-    border: 1px dashed var(--dim); padding: 22px; text-align: center; color: var(--dim);
-    cursor: pointer; font-size: 13px;
-  }
-  .drop.over, .drop:hover { border-color: var(--accent); color: var(--ink); background: var(--sel); }
-  .drop b { color: var(--ink); font-family: var(--mono); font-weight: 600; }
+  .drop { border: 1px dashed var(--line2); border-radius: 10px; padding: 24px; text-align: center; color: var(--dim); cursor: pointer; font-size: 13px; transition: all .15s; }
+  .drop.over, .drop:hover { border-color: var(--amber); color: var(--ink); background: rgba(255,180,84,.05); }
+  .drop b { color: var(--amber); font-weight: 600; font-family: var(--mono); }
 
-  .resp { margin-top: 34px; border-top: 2px solid var(--ink); padding-top: 12px; }
-  .status { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
-  .code { font: 700 30px var(--mono); letter-spacing: -.03em; }
-  .code.s2 { color: var(--ok); } .code.s3 { color: var(--warn); }
-  .code.s4, .code.s5, .code.err { color: var(--bad); }
+  .resp { margin-top: 26px; border-top: 1px solid var(--line2); padding-top: 16px; }
+  .status { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .code { font: 400 40px/1 var(--serif); }
+  .code.s2 { color: var(--ok); } .code.s3 { color: var(--warn); } .code.s4, .code.s5, .code.err { color: var(--bad); }
   .reason { font: 14px var(--mono); }
   .meta { font: 12px var(--mono); color: var(--dim); margin-left: auto; }
   .note { font: 12px var(--mono); color: var(--warn); margin: 6px 0 0; }
   table.h { width: 100%; border-collapse: collapse; font: 12.5px var(--mono); }
-  table.h td { padding: 3px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-  table.h td:first-child { color: var(--dim); width: 210px; padding-right: 14px; white-space: nowrap; }
+  table.h td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.h td:first-child { color: var(--dim); width: 200px; padding-right: 14px; white-space: nowrap; }
   table.h td:last-child { word-break: break-all; }
-  pre.body {
-    margin: 0; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line);
-    font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word;
-    max-height: 460px; overflow: auto;
-  }
-  iframe.view { width: 100%; height: 360px; border: 1px solid var(--line); background: #fff; }
-  img.view { max-width: 100%; border: 1px solid var(--line); }
-  .idle { margin-top: 34px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--line); padding-top: 12px; }
-  .idle kbd { font: 12px var(--mono); border: 1px solid var(--line); padding: 0 5px; }
+  pre.body { margin: 0; padding: 14px 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: 12.5px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow: auto; }
+  iframe.view { width: 100%; height: 340px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  img.view { max-width: 100%; border-radius: 8px; border: 1px solid var(--line); }
+  .idle { margin-top: 26px; border-top: 1px solid var(--line2); padding-top: 16px; color: var(--dim); font-size: 13.5px; }
+  .idle kbd { font: 12px var(--mono); border: 1px solid var(--line2); border-radius: 4px; padding: 0 6px; }
 
-  @media (max-width: 760px) {
-    body { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
-    aside { display: none; }
-    main { padding: 16px; }
-    header { flex-wrap: wrap; gap: 6px 14px; }
-    .ports { margin-left: 0; }
+  /* config --------------------------------------------------------------- */
+  .cfg { display: grid; grid-template-columns: 1fr 1.25fr; gap: 56px; align-items: start; }
+  .cfg ul { list-style: none; margin: 0; padding: 0; }
+  .cfg li { padding: 14px 0; border-top: 1px solid var(--line); color: var(--dim); font-size: 15px; }
+  .cfg li:last-child { border-bottom: 1px solid var(--line); }
+  .cfg li b { color: var(--ink); font-weight: 600; }
+  .code-block { background: #08080a; border: 1px solid var(--line2); border-radius: 14px; overflow: hidden; }
+  .code-block .bar { padding: 11px 16px; border-bottom: 1px solid var(--line); font: 12px var(--mono); color: var(--faint); }
+  .code-block pre { margin: 0; padding: 18px 20px; font: 13px/1.7 var(--mono); overflow-x: auto; color: #cfcabd; }
+  .c-k { color: var(--amber); } .c-c { color: var(--faint); } .c-v { color: #9ec9ff; }
+
+  /* footer --------------------------------------------------------------- */
+  footer { margin-top: 120px; border-top: 1px solid var(--line); padding: 44px 0 56px; color: var(--dim); font-size: 14px; }
+  footer .wrap { display: flex; gap: 30px; justify-content: space-between; flex-wrap: wrap; align-items: flex-end; }
+  footer h5 { font: 400 26px var(--serif); color: var(--ink); margin: 0 0 6px; }
+  footer p { margin: 0; }
+  footer .who { font-family: var(--mono); font-size: 13px; }
+  footer .who a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line2); }
+  footer .who a:hover { border-color: var(--amber); }
+
+  /* reveal --------------------------------------------------------------- */
+  .js .rv { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+  .js .rv.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .js .rv { opacity: 1; transform: none; transition: none; }
+    .live.up .dot, .caret { animation: none; }
+  }
+
+  /* responsive ----------------------------------------------------------- */
+  @media (max-width: 920px) {
+    .hero .wrap, .cfg { grid-template-columns: 1fr; gap: 40px; }
+    .hero { padding: 64px 0 60px; }
+    .pipe { grid-template-columns: 1fr; gap: 26px; }
+    .step { padding: 0 0 0 38px; }
+    .step::before { position: absolute; left: 0; top: 2px; margin: 0; }
+    .step::after { display: none; }
+    .grid { grid-template-columns: 1fr 1fr; }
+    .facts .wrap { grid-template-columns: 1fr 1fr; }
+    .fact:nth-child(3) { border-left: 0; padding-left: 0; }
+    .fact { border-top: 1px solid var(--line); }
+    .fact:nth-child(-n+2) { border-top: 0; }
+    .console { grid-template-columns: 1fr; }
+    .c-side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 190px; }
+  }
+  @media (max-width: 600px) {
+    .wrap { padding: 0 18px; }
+    nav .links { display: none; }
+    nav .live { margin-left: auto; }
+    section { padding-top: 76px; }
+    .grid { grid-template-columns: 1fr; }
+    .c-main { padding: 16px; }
     .meta { margin-left: 0; width: 100%; }
   }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>webserv<span>/</span>console</h1>
-  <span class="origin" id="origin"></span>
-  <span class="ports" id="ports"></span>
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#top">webserv<i>/</i></a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#try">Try it</a>
+      <a href="#config">Config</a>
+    </div>
+    <div class="live" id="live"><span class="dot"></span><span id="livetxt">connecting…</span></div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow">C++98 &nbsp;·&nbsp; HTTP/1.1 &nbsp;·&nbsp; 42 Network</p>
+      <h1>A web server,<br>written <em>from scratch.</em></h1>
+      <p class="lede">No frameworks, no libraries. Just sockets, <code>poll()</code> and a config file — serving static sites, running CGI scripts and taking uploads, all without blocking. And you're looking at it right now.</p>
+      <div class="cta">
+        <a class="btn main" href="#try">Send a request &rarr;</a>
+        <a class="btn ghost" href="#config">See the config</a>
+      </div>
+    </div>
+    <div class="term" aria-label="Live requests to this server">
+      <div class="bar"><i></i><i></i><i></i><span id="termhost">live from this server</span></div>
+      <pre id="term"></pre>
+    </div>
+  </div>
 </header>
 
-<aside>
-  <h2>Routes</h2>
-  <div id="presets"></div>
-  <h2>History</h2>
-  <div id="history"></div>
-</aside>
-
-<main>
-  <form class="line" id="form" autocomplete="off">
-    <select id="method">
-      <option>GET</option><option>POST</option><option>DELETE</option>
-      <option>PUT</option><option>HEAD</option><option>OPTIONS</option>
-    </select>
-    <input id="path" value="/" spellcheck="false" aria-label="Path">
-    <button id="send" type="submit">Send</button>
-  </form>
-
-  <div class="tabs">
-    <button class="tab on" data-tab="body">Body</button>
-    <button class="tab" data-tab="headers">Headers <span id="hcount"></span></button>
-    <button class="tab" data-tab="file">File upload</button>
+<div class="facts">
+  <div class="wrap">
+    <div class="fact"><b>C++98</b><span>no modern standard</span></div>
+    <div class="fact"><b>poll()</b><span>one loop, non-blocking</span></div>
+    <div class="fact"><b>3 ports</b><span>8080 · 8081 · 8082</span></div>
+    <div class="fact"><b>GET·POST·DELETE</b><span>per-route permissions</span></div>
   </div>
+</div>
 
-  <section class="pane on" id="pane-body">
-    <div class="row">
-      <label><input type="radio" name="ct" value="text/plain" checked> text</label>
-      <label><input type="radio" name="ct" value="application/json"> json</label>
-      <label><input type="radio" name="ct" value="application/x-www-form-urlencoded"> form</label>
+<section id="how">
+  <div class="wrap">
+    <p class="k rv">Architecture</p>
+    <h2 class="rv">From socket to response.</h2>
+    <p class="sub rv">Every connection travels the same path. One event loop watches all the sockets, so a slow client never holds up a fast one.</p>
+    <div class="pipe rv">
+      <div class="step"><h3>Poller</h3><p>poll() watches every listening and client socket for readiness.</p></div>
+      <div class="step"><h3>HttpParser</h3><p>Bytes in, request out — method, path, headers and body, validated.</p></div>
+      <div class="step"><h3>Router</h3><p>Picks the server and the longest matching <code>location</code> block.</p></div>
+      <div class="step"><h3>Handlers</h3><p>Static files, directory listings, CGI or uploads do the actual work.</p></div>
+      <div class="step"><h3>ResponseBuilder</h3><p>Status, headers and body written back to the client socket.</p></div>
     </div>
-    <textarea id="body" spellcheck="false" placeholder="Request body (sent with POST / PUT)"></textarea>
-    <p class="hint" id="bodyhint"></p>
-  </section>
+  </div>
+</section>
 
-  <section class="pane" id="pane-headers">
-    <div id="hlist"></div>
-    <button class="link" id="addh" type="button">+ add header</button>
-    <p class="hint">The browser sets Host, Content-Length and Connection itself.</p>
-  </section>
-
-  <section class="pane" id="pane-file">
-    <div class="drop" id="drop">Drop a file here or <b>choose one</b>
-      <input type="file" id="file" hidden>
+<section id="features">
+  <div class="wrap">
+    <p class="k rv">What it does</p>
+    <h2 class="rv">Everything a small server should.</h2>
+    <p class="sub rv">All of it driven by an nginx-style configuration file.</p>
+    <div class="grid rv">
+      <div class="feat"><span class="ic">GET</span><h3>Static files</h3><p>Correct MIME types, index files, and path-traversal protection built in.</p></div>
+      <div class="feat"><span class="ic">/dir/</span><h3>Autoindex</h3><p>Generated directory listings with sizes and dates, switched on per location.</p></div>
+      <div class="feat"><span class="ic">.py .sh</span><h3>CGI</h3><p>Scripts run through the interpreter you map to each extension, with the standard CGI environment.</p></div>
+      <div class="feat"><span class="ic">POST</span><h3>Uploads</h3><p>Raw and multipart/form-data bodies saved to a configured store, with filename sanitising.</p></div>
+      <div class="feat"><span class="ic">404</span><h3>Custom error pages</h3><p>Nine status codes each get their own page, and a built-in fallback if the file is missing.</p></div>
+      <div class="feat"><span class="ic">301</span><h3>Limits &amp; redirects</h3><p>Body size limits, allowed methods per route, and <code>return</code> redirects.</p></div>
     </div>
-    <p class="hint" id="fileinfo">Sent as multipart/form-data. Point the path at a location with <code>upload_enable</code> — on :8081 that is <b>/uploads</b>.</p>
-  </section>
+  </div>
+</section>
 
-  <div id="out"><div class="idle">Nothing sent yet. Pick a route on the left or type a path and press <kbd>Enter</kbd>.</div></div>
-</main>
+<section id="try">
+  <div class="wrap">
+    <p class="k rv">Live demo</p>
+    <h2 class="rv">Don't take my word for it.</h2>
+    <p class="sub rv">This console sends real requests to the server hosting this page. Hit a route, upload a file, break something on purpose.</p>
+
+    <div class="console rv">
+      <div class="c-side">
+        <h4>Routes</h4><div id="presets"></div>
+        <h4>History</h4><div id="history"></div>
+      </div>
+      <div class="c-main">
+        <form class="line" id="form" autocomplete="off">
+          <select id="method"><option>GET</option><option>POST</option><option>DELETE</option><option>PUT</option><option>HEAD</option><option>OPTIONS</option></select>
+          <input id="path" value="/" spellcheck="false" aria-label="Path">
+          <button id="send" type="submit">Send</button>
+        </form>
+
+        <div class="tabs">
+          <button class="tab on" data-tab="body" type="button">Body</button>
+          <button class="tab" data-tab="headers" type="button">Headers <span id="hcount"></span></button>
+          <button class="tab" data-tab="file" type="button">File upload</button>
+        </div>
+        <section class="pane on" id="pane-body" style="padding-top:14px">
+          <div class="row">
+            <label><input type="radio" name="ct" value="text/plain" checked> text</label>
+            <label><input type="radio" name="ct" value="application/json"> json</label>
+            <label><input type="radio" name="ct" value="application/x-www-form-urlencoded"> form</label>
+          </div>
+          <textarea id="body" spellcheck="false" placeholder="Request body (sent with POST / PUT)"></textarea>
+          <p class="hint" id="bodyhint"></p>
+        </section>
+        <section class="pane" id="pane-headers" style="padding-top:14px">
+          <div id="hlist"></div>
+          <button class="link" id="addh" type="button">+ add header</button>
+          <p class="hint">Your browser sets Host, Content-Length and Connection itself.</p>
+        </section>
+        <section class="pane" id="pane-file" style="padding-top:14px">
+          <div class="drop" id="drop"><span id="droptxt">Drop a file here or</span> <b>choose one</b><input type="file" id="file" hidden></div>
+          <p class="hint" id="fileinfo">Sent as multipart/form-data. Upload locations are marked <code>upload_enable</code> — on :8081 that's <code>/uploads</code>.</p>
+        </section>
+
+        <div id="out"><div class="idle">Nothing sent yet. Pick a route on the left, or type a path and press <kbd>Enter</kbd>.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="config">
+  <div class="wrap cfg">
+    <div>
+      <p class="k rv">Configuration</p>
+      <h2 class="rv">One file runs the whole thing.</h2>
+      <p class="sub rv" style="margin-bottom:28px">Ports, roots, error pages, CGI interpreters and upload folders are all declared, not hard-coded.</p>
+      <ul class="rv">
+        <li><b>Multiple ports</b> — several <code>listen</code> lines per server</li>
+        <li><b>Per-route methods</b> — <code>allowed_methods GET POST</code></li>
+        <li><b>CGI by extension</b> — map <code>.py</code> and <code>.sh</code> to interpreters</li>
+        <li><b>Body limits</b> — <code>client_max_body_size 6M</code></li>
+      </ul>
+    </div>
+    <div class="code-block rv">
+      <div class="bar">webserver.conf</div>
+<pre><span class="c-k">server</span> {
+    <span class="c-k">listen</span> <span class="c-v">8081</span>;
+    <span class="c-k">listen</span> <span class="c-v">8082</span>;
+    <span class="c-k">client_max_body_size</span> <span class="c-v">6M</span>;
+
+    <span class="c-k">location</span> / {
+        <span class="c-k">autoindex</span> on;
+        <span class="c-k">allowed_methods</span> GET POST DELETE;
+    }
+
+    <span class="c-k">location</span> /uploads {
+        <span class="c-k">upload_enable</span> on;
+        <span class="c-k">upload_store</span> ./www/uploads;
+        <span class="c-k">allowed_methods</span> GET POST;
+    }
+
+    <span class="c-k">location</span> /cgi-bin {
+        <span class="c-k">cgi_extension</span> .py /usr/bin/python3;
+        <span class="c-k">cgi_extension</span> .sh /bin/bash;
+    }
+
+    <span class="c-k">location</span> /old-page {
+        <span class="c-k">return</span> <span class="c-v">301</span> /index.html;
+    }
+}</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <h5>webserv</h5>
+      <p>An HTTP server, built for the 42 curriculum.</p>
+    </div>
+    <p class="who">by jalqam · sshawish · falhaimo</p>
+  </div>
+</footer>
 
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var PORTS = [8080, 8081, 8082];
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+  function fmtBytes(n) { return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KB"; }
+
+  // scroll reveal -------------------------------------------------------------
+  var rv = document.querySelectorAll(".rv");
+  if ("IntersectionObserver" in window && !reduce) {
+    document.documentElement.classList.add("js");
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    Array.prototype.forEach.call(rv, function (el) { io.observe(el); });
+  }
+
+  // live status pill ----------------------------------------------------------
+  var port = location.port || "80";
+  $("termhost").textContent = location.host + " — live";
+  fetch("/", { cache: "no-store" }).then(function (r) {
+    $("live").classList.add("up"); $("livetxt").textContent = "serving on :" + port;
+  }).catch(function () { $("livetxt").textContent = "offline"; });
+
+  // hero terminal: real requests against this server -----------------------------
+  var T = $("term");
+  var SCRIPT = [
+    ["GET", "/cgi-bin/hello.py?from=portfolio"],
+    ["GET", "/nope"],
+    ["GET", "/index.html"]
+  ];
+  function cls(code) { return code < 300 ? "t-ok" : code < 400 ? "t-warn" : "t-bad"; }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, reduce ? 0 : ms); }); }
+  var html = "";
+  function paint(extra) { T.innerHTML = html + (extra || "") + '<span class="caret"></span>'; }
+  function typeCmd(text) {
+    var i = 0;
+    return new Promise(function (done) {
+      (function step() {
+        paint('<span class="t-p">$ </span>' + esc(text.slice(0, i)));
+        if (i++ < text.length) setTimeout(step, reduce ? 0 : 22 + Math.random() * 28); else done();
+      })();
+    });
+  }
+  function runTerm() {
+    var chain = Promise.resolve();
+    SCRIPT.forEach(function (s) {
+      chain = chain.then(function () {
+        var cmd = "curl -i " + (s[0] === "GET" ? "" : "-X " + s[0] + " ") + location.host + s[1];
+        var t0;
+        return typeCmd(cmd).then(function () { return wait(250); }).then(function () {
+          t0 = performance.now();
+          return fetch(s[1], { method: s[0], cache: "no-store" });
+        }).then(function (res) {
+          var ms = Math.round(performance.now() - t0);
+          return res.text().then(function (txt) {
+            var ct = res.headers.get("content-type") || "";
+            var lines = txt.split("\n").filter(function (l) { return l.trim(); });
+            var head = /html/i.test(ct) ? "<" + (txt.match(/<title>([^<]*)/i) || [0, "html document"])[1] + ">" : lines.slice(0, 3).join("\n");
+            html += '<span class="t-p">$ </span>' + esc(cmd) + "\n" +
+              "<span class=\"" + cls(res.status) + "\">HTTP/1.1 " + res.status + " " + esc(res.statusText) + "</span>\n" +
+              '<span class="t-d">content-type: ' + esc(ct.split(";")[0] || "—") + "\nlatency: " + ms + " ms</span>\n" +
+              esc(head) + "\n\n";
+            paint();
+          });
+        }).then(function () { return wait(1100); });
+      });
+    });
+    chain.then(function () { return wait(2200); }).then(function () {
+      html = ""; paint(); return wait(500);
+    }).then(runTerm);
+  }
+  paint();
+  fetch("/").then(runTerm, function () {
+    html = '<span class="t-bad">could not reach the server.</span>\n<span class="t-d">start it with ./webserver webserver.conf</span>\n'; paint();
+  });
+
+  // console -------------------------------------------------------------------
   var PRESETS = [
     ["GET", "/"], ["GET", "/index.html"], ["GET", "/testdir/"], ["GET", "/uploads/"],
     ["GET", "/cgi-bin/"], ["GET", "/cgi-bin/hello.py?name=42"], ["GET", "/cgi-bin/env.sh"],
@@ -212,79 +528,62 @@
     ["DELETE", "/testdir/test.txt"]
   ];
   var KEY = "webserv-console-history";
-  var file = null;
-  var history = [];
+  var file = null, history = [];
   try { history = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) {}
 
-  // header chrome ------------------------------------------------------------
-  var here = location.port || "80";
-  $("origin").textContent = location.host;
-  $("ports").innerHTML = "open on" + PORTS.map(function (p) {
-    var u = location.protocol + "//" + location.hostname + ":" + p + "/";
-    return '<a href="' + u + '"' + (String(p) === here ? ' class="here"' : "") + ">:" + p + "</a>";
-  }).join("");
-
-  // sidebar ------------------------------------------------------------------
-  function entry(cls, m, p, extra) {
+  function item(m, p, extra) {
     var b = document.createElement("button");
-    b.type = "button"; b.className = cls; b.title = m + " " + p;
+    b.type = "button"; b.className = "item"; b.title = m + " " + p;
     b.innerHTML = '<span class="m ' + m + '">' + m + '</span><span class="p"></span>' + (extra || "");
     b.querySelector(".p").textContent = p;
     b.onclick = function () { $("method").value = m; $("path").value = p; $("path").focus(); };
     return b;
   }
-  PRESETS.forEach(function (r) { $("presets").appendChild(entry("preset", r[0], r[1])); });
+  PRESETS.forEach(function (r) { $("presets").appendChild(item(r[0], r[1])); });
 
   function drawHistory() {
     var box = $("history"); box.innerHTML = "";
-    if (!history.length) { box.innerHTML = '<div class="empty">empty</div>'; return; }
+    if (!history.length) { box.innerHTML = '<div class="none">empty</div>'; return; }
     history.forEach(function (h) {
-      box.appendChild(entry("hist", h.m, h.p,
-        '<span class="s' + (h.s ? "" : " e") + '">' + (h.s || "err") + "</span>"));
+      box.appendChild(item(h.m, h.p, '<span class="s' + (h.s ? "" : " e") + '">' + (h.s || "err") + "</span>"));
     });
     var c = document.createElement("button");
-    c.className = "clear"; c.textContent = "clear"; c.type = "button";
+    c.className = "clear"; c.type = "button"; c.textContent = "clear";
     c.onclick = function () { history = []; save(); drawHistory(); };
     box.appendChild(c);
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(history)); } catch (e) {} }
   drawHistory();
 
-  // tabs ---------------------------------------------------------------------
-  Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (t) {
+  Array.prototype.forEach.call(document.querySelectorAll(".c-main > .tabs .tab"), function (t) {
     t.onclick = function () {
-      Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (x) { x.classList.toggle("on", x === t); });
+      Array.prototype.forEach.call(document.querySelectorAll(".c-main > .tabs .tab"), function (x) { x.classList.toggle("on", x === t); });
       ["body", "headers", "file"].forEach(function (n) { $("pane-" + n).classList.toggle("on", n === t.dataset.tab); });
     };
   });
 
-  // headers editor -----------------------------------------------------------
-  function addHeader(k, v) {
-    var r = document.createElement("div"); r.className = "kv";
-    r.innerHTML = '<input type="text" placeholder="Name"><input type="text" placeholder="Value"><button type="button" title="remove">×</button>';
-    r.children[0].value = k || ""; r.children[1].value = v || "";
-    r.children[2].onclick = function () { r.remove(); countHeaders(); };
-    r.oninput = countHeaders;
-    $("hlist").appendChild(r); countHeaders();
-  }
   function countHeaders() {
     var n = 0;
     Array.prototype.forEach.call($("hlist").children, function (r) { if (r.children[0].value.trim()) n++; });
     $("hcount").textContent = n ? "(" + n + ")" : "";
   }
-  $("addh").onclick = function () { addHeader(); };
-  addHeader();
+  function addHeader() {
+    var r = document.createElement("div"); r.className = "kv";
+    r.innerHTML = '<input type="text" placeholder="Name"><input type="text" placeholder="Value"><button type="button" title="remove">×</button>';
+    r.children[2].onclick = function () { r.remove(); countHeaders(); };
+    r.oninput = countHeaders;
+    $("hlist").appendChild(r);
+  }
+  $("addh").onclick = addHeader; addHeader();
 
-  // file picker --------------------------------------------------------------
+  function refreshHint() { $("bodyhint").textContent = file ? "A file is attached — the body above is ignored." : ""; }
   function setFile(f) {
-    file = f;
-    $("fileinfo").textContent = f ? f.name + " · " + f.size.toLocaleString() + " bytes — will be sent as multipart/form-data" : "";
-    if (f) {
-      $("drop").firstChild.textContent = f.name + " — ";
-      $("drop").querySelector("b").textContent = "change";
-      if ($("method").value === "GET") $("method").value = "POST";
-      if (!/^\/uploads/.test($("path").value)) $("path").value = "/uploads/";
-    }
+    file = f; if (!f) return;
+    $("droptxt").textContent = f.name + " (" + f.size.toLocaleString() + " bytes) —";
+    $("drop").querySelector("b").textContent = "change";
+    $("fileinfo").textContent = "Will be sent as multipart/form-data.";
+    if ($("method").value === "GET") $("method").value = "POST";
+    if (!/^\/uploads/.test($("path").value)) $("path").value = "/uploads/";
     refreshHint();
   }
   $("drop").onclick = function () { $("file").click(); };
@@ -292,15 +591,6 @@
   ["dragover", "dragenter"].forEach(function (e) { $("drop").addEventListener(e, function (ev) { ev.preventDefault(); this.classList.add("over"); }); });
   ["dragleave", "drop"].forEach(function (e) { $("drop").addEventListener(e, function () { this.classList.remove("over"); }); });
   $("drop").addEventListener("drop", function (ev) { ev.preventDefault(); if (ev.dataTransfer.files[0]) setFile(ev.dataTransfer.files[0]); });
-
-  function refreshHint() {
-    $("bodyhint").textContent = file ? "A file is attached — the body above is ignored." : "";
-  }
-
-  // send ---------------------------------------------------------------------
-  function reasonOf(res) { return res.statusText || ""; }
-  function fmtBytes(n) { return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KB"; }
-  function esc(s) { return s.replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
 
   $("form").onsubmit = function (ev) {
     ev.preventDefault();
@@ -317,9 +607,8 @@
       var fd = new FormData(); fd.append("file", file, file.name); opts.body = fd;
     } else if (canBody && $("body").value) {
       opts.body = $("body").value;
-      var ct = document.querySelector('input[name=ct]:checked').value;
       var has = Object.keys(opts.headers).some(function (k) { return k.toLowerCase() === "content-type"; });
-      if (!has) opts.headers["Content-Type"] = ct;
+      if (!has) opts.headers["Content-Type"] = document.querySelector("input[name=ct]:checked").value;
     }
 
     var btn = $("send"); btn.disabled = true; btn.textContent = "…";
@@ -332,7 +621,7 @@
     }).catch(function (err) {
       $("out").innerHTML = '<div class="resp"><div class="status"><span class="code err">no response</span>' +
         '<span class="meta">' + Math.round(performance.now() - t0) + ' ms</span></div>' +
-        '<p class="hint">' + esc(String(err.message || err)) + ' — the server closed the connection or is not reachable.</p></div>';
+        '<p class="hint">' + esc(err.message || err) + ' — the server closed the connection or is unreachable.</p></div>';
       remember(method, path, 0);
     }).then(function () { btn.disabled = false; btn.textContent = "Send"; });
   };
@@ -346,52 +635,46 @@
     var ctype = res.headers.get("content-type") || "";
     var text = new TextDecoder().decode(buf);
     var isHtml = /html/i.test(ctype), isImg = /^image\//i.test(ctype);
-    var rows = "";
-    res.headers.forEach(function (v, k) { rows += "<tr><td>" + esc(k) + "</td><td>" + esc(v) + "</td></tr>"; });
+    var rows = "", n = 0;
+    res.headers.forEach(function (v, k) { n++; rows += "<tr><td>" + esc(k) + "</td><td>" + esc(v) + "</td></tr>"; });
 
     var note = "";
-    if (res.redirected) note = '<p class="note">followed redirect → ' + esc(new URL(res.url).pathname + new URL(res.url).search) + "</p>";
+    if (res.redirected) { var u = new URL(res.url); note = '<p class="note">followed redirect → ' + esc(u.pathname + u.search) + "</p>"; }
 
-    var views = ['<button class="tab on" data-v="raw">Raw</button>'];
-    if (isHtml) views.push('<button class="tab" data-v="page">Rendered</button>');
-    if (isImg) views = ['<button class="tab on" data-v="img">Image</button>'];
-    views.push('<button class="tab" data-v="hdr">Headers (' + (rows.split("<tr>").length - 1) + ")</button>");
+    var views = isImg ? ['<button class="tab on" data-v="img" type="button">Image</button>']
+                      : ['<button class="tab on" data-v="raw" type="button">Raw</button>'];
+    if (isHtml) views.push('<button class="tab" data-v="page" type="button">Rendered</button>');
+    views.push('<button class="tab" data-v="hdr" type="button">Headers (' + n + ")</button>");
 
-    var cls = "s" + String(res.status).charAt(0);
     $("out").innerHTML =
       '<div class="resp"><div class="status">' +
-      '<span class="code ' + cls + '">' + res.status + '</span><span class="reason">' + esc(reasonOf(res)) + "</span>" +
+      '<span class="code s' + String(res.status).charAt(0) + '">' + res.status + '</span><span class="reason">' + esc(res.statusText) + "</span>" +
       '<span class="meta">' + method + " " + esc(path) + " · " + Math.round(ms) + " ms · " + fmtBytes(buf.byteLength) +
       (ctype ? " · " + esc(ctype.split(";")[0]) : "") + "</span></div>" + note +
       '<div class="tabs" id="vtabs">' + views.join("") + "</div>" +
-      '<div class="pane on" id="v-raw"></div><div class="pane" id="v-page"></div>' +
+      '<div class="pane" id="v-raw"></div><div class="pane" id="v-page"></div>' +
       '<div class="pane" id="v-img"></div><div class="pane" id="v-hdr"><table class="h">' + rows + "</table></div></div>";
 
-    if (!isImg) {
+    if (isImg) {
+      var im = document.createElement("img"); im.className = "view";
+      im.src = URL.createObjectURL(new Blob([buf], { type: ctype }));
+      $("v-img").appendChild(im); $("v-img").classList.add("on");
+    } else {
       var pre = document.createElement("pre"); pre.className = "body";
       pre.textContent = method === "HEAD" ? "(HEAD — no body)" : (text || "(empty body)");
-      $("v-raw").appendChild(pre);
+      $("v-raw").appendChild(pre); $("v-raw").classList.add("on");
     }
     if (isHtml) {
       var f = document.createElement("iframe"); f.className = "view"; f.setAttribute("sandbox", ""); f.srcdoc = text;
       $("v-page").appendChild(f);
     }
-    if (isImg) {
-      var im = document.createElement("img"); im.className = "view";
-      im.src = URL.createObjectURL(new Blob([buf], { type: ctype }));
-      $("v-img").appendChild(im); $("v-img").classList.add("on"); $("v-raw").classList.remove("on");
-    }
     Array.prototype.forEach.call($("vtabs").children, function (t) {
       t.onclick = function () {
         Array.prototype.forEach.call($("vtabs").children, function (x) { x.classList.toggle("on", x === t); });
-        ["raw", "page", "img", "hdr"].forEach(function (n) {
-          var p = $("v-" + n); if (p) p.classList.toggle("on", n === t.dataset.v);
-        });
+        ["raw", "page", "img", "hdr"].forEach(function (k) { var p = $("v-" + k); if (p) p.classList.toggle("on", k === t.dataset.v); });
       };
     });
   }
-
-  refreshHint();
 })();
 </script>
 </body>
